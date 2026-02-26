@@ -2,7 +2,10 @@ import type {
   ColumnDef,
   ColumnFiltersState,
   ColumnPinningState,
+  ColumnVisibilityState,
+  ExpandedState,
   PaginationState,
+  Row,
   SortingState,
   RowSelectionState,
 } from '@tanstack/react-table'
@@ -12,18 +15,24 @@ export type {
   ColumnDef,
   ColumnFiltersState,
   ColumnPinningState,
+  ColumnVisibilityState,
+  ExpandedState,
   PaginationState,
+  Row,
   SortingState,
   RowSelectionState,
 }
 
-// ─── Callback types ──────────────────────────────────────────────────────────
+// ─── Callback types ───────────────────────────────────────────────────────────
 
 export type OnSortingChange = (state: SortingState) => void
 export type OnColumnFiltersChange = (state: ColumnFiltersState) => void
+export type OnGlobalFilterChange = (value: string) => void
 export type OnPaginationChange = (state: PaginationState) => void
 export type OnColumnPinningChange = (state: ColumnPinningState) => void
+export type OnColumnVisibilityChange = (state: ColumnVisibilityState) => void
 export type OnRowSelectionChange = (state: RowSelectionState) => void
+export type OnExpandedChange = (state: ExpandedState) => void
 
 // ─── Page size options ────────────────────────────────────────────────────────
 
@@ -39,10 +48,21 @@ export interface DataTableProps<TData> {
   // Sort — controlled
   sorting?: SortingState
   onSortingChange?: OnSortingChange
+  /** Allow shift+click to add secondary sort columns. Default: false */
+  enableMultiSort?: boolean
+  /** Maximum number of simultaneous sort columns when multi-sort is on. Default: 3 */
+  maxMultiSortColCount?: number
 
-  // Filter — controlled
+  // Column filter — controlled
   columnFilters?: ColumnFiltersState
   onColumnFiltersChange?: OnColumnFiltersChange
+
+  // Global filter — controlled
+  /** Value used to filter across all columns simultaneously */
+  globalFilter?: string
+  onGlobalFilterChange?: OnGlobalFilterChange
+  /** Placeholder for the global search input */
+  globalFilterPlaceholder?: string
 
   // Pagination — controlled
   // pageIndex is 0-based (TanStack convention), internally translated for display
@@ -55,9 +75,19 @@ export interface DataTableProps<TData> {
   columnPinning?: ColumnPinningState
   onColumnPinningChange?: OnColumnPinningChange
 
+  // Column visibility — controlled
+  columnVisibility?: ColumnVisibilityState
+  onColumnVisibilityChange?: OnColumnVisibilityChange
+
   // Row selection — controlled
   rowSelection?: RowSelectionState
   onRowSelectionChange?: OnRowSelectionChange
+
+  // Row expansion — controlled
+  expanded?: ExpandedState
+  onExpandedChange?: OnExpandedChange
+  /** Renders the expanded sub-row content below the parent row */
+  renderSubRow?: (row: Row<TData>) => React.ReactNode
 
   // UI
   /** Freeze the header row via sticky positioning */
