@@ -1,0 +1,22 @@
+{
+  "name": "@corephp/ui",
+  "baseUrl": "https://raw.githubusercontent.com/corePHP/ui/main",
+  "items": [
+    {
+      "name": "button",
+      "type": "registry:ui",
+      "description": "Button com dual-axis variant/color via CVA",
+      "dependencies": ["class-variance-authority", "@radix-ui/react-slot"],
+      "files": [
+        {
+          "path": "src/components/ui/button.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "src/components/ui/button.stories.tsx",
+          "type": "registry:story"
+        }
+      ]
+    }
+  ]
+}
