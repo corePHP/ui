@@ -1,4 +1,4 @@
-import { cloneElement, useRef, useState } from 'react'
+import { Fragment, cloneElement, useCallback, useMemo, useRef, useState } from 'react'
 import {
   flexRender,
   getCoreRowModel,
@@ -113,7 +113,7 @@ function DataTable<TData>({
   // ── Keyboard-navigation helpers ───────────────────────────────────────────
   // After an edit commits or cancels, return focus to the originating cell so
   // the user can continue navigating with arrow keys without touching the mouse.
-  const refocusCell = (rowId: string, columnId: string) => {
+  const refocusCell = useCallback((rowId: string, columnId: string) => {
     if (!enableKeyboardNavigation) return
     requestAnimationFrame(() => {
       const td = containerRef.current?.querySelector(
@@ -121,26 +121,26 @@ function DataTable<TData>({
       ) as HTMLTableCellElement | null
       td?.focus()
     })
-  }
+  }, [enableKeyboardNavigation])
 
-  const startEditing = (rowId: string, columnId: string) => {
+  const startEditing = useCallback((rowId: string, columnId: string) => {
     if (isEditingControlled) {
       onEditingCellChange?.({ rowId, columnId })
     } else {
       setInternalEditingCell({ rowId, columnId })
     }
-  }
+  }, [isEditingControlled, onEditingCellChange])
 
-  const stopEditing = (rowId?: string, columnId?: string) => {
+  const stopEditing = useCallback((rowId?: string, columnId?: string) => {
     if (isEditingControlled) {
       onEditingCellChange?.(null)
     } else {
       setInternalEditingCell(null)
     }
     if (rowId && columnId) refocusCell(rowId, columnId)
-  }
+  }, [isEditingControlled, onEditingCellChange, refocusCell])
 
-  const commitEdit = (row: Row<TData>, columnId: string, newValue: unknown) => {
+  const commitEdit = useCallback((row: Row<TData>, columnId: string, newValue: unknown) => {
     onCellValueChange?.({
       rowId: row.id,
       columnId,
@@ -150,7 +150,7 @@ function DataTable<TData>({
       row,
     } as CellChangeEvent<TData>)
     stopEditing(row.id, columnId)
-  }
+  }, [onCellValueChange, stopEditing])
 
   const table = useReactTable<TData>({
     data,
@@ -227,22 +227,25 @@ function DataTable<TData>({
   })
 
   // ── Component slots ────────────────────────────────────────────────────────
-  // Falls back to the built-in atoms when not overridden.
-  const RowComp  = components?.Row  ?? TableRow
-  const CellComp = components?.Cell ?? TableCell
+  // useMemo prevents component identity changes when parent re-renders without
+  // changing the components prop, which would otherwise remount all rows.
+  const RowComp  = useMemo(() => components?.Row  ?? TableRow,  [components?.Row])
+  const CellComp = useMemo(() => components?.Cell ?? TableCell, [components?.Cell])
 
   // ── Derived flags ──────────────────────────────────────────────────────────
-  const hasGlobalFilter  = onGlobalFilterChange !== undefined
+  const hasGlobalFilter  = onGlobalFilterChange  !== undefined
   const hasColVisibility = onColumnVisibilityChange !== undefined
-  const hasFilterRow     =
-    onColumnFiltersChange !== undefined &&
-    table.getAllLeafColumns().some((c) => c.getCanFilter())
-  const hasPagination    = onPaginationChange !== undefined
-  const hasExpansion     = renderSubRow !== undefined
-  const hasEditing       = onCellValueChange !== undefined
+  const hasPagination    = onPaginationChange    !== undefined
+  const hasExpansion     = renderSubRow          !== undefined
+  const hasEditing       = onCellValueChange     !== undefined
+  // Memoized separately: getAllLeafColumns() iterates all columns on every call
+  const hasFilterRow = useMemo(
+    () => onColumnFiltersChange !== undefined && table.getAllLeafColumns().some((c) => c.getCanFilter()),
+    [onColumnFiltersChange, table],
+  )
 
   // ── Keyboard navigation handler ───────────────────────────────────────────
-  const handleBodyKeyDown = (e: React.KeyboardEvent<HTMLTableSectionElement>) => {
+  const handleBodyKeyDown = useCallback((e: React.KeyboardEvent<HTMLTableSectionElement>) => {
     // While a cell editor (input / select / textarea) has focus, let it handle
     // its own key events — do not interfere with arrow keys inside editors.
     const target = e.target as HTMLElement
@@ -306,10 +309,10 @@ function DataTable<TData>({
     }
 
     if (target2) target2.focus()
-  }
+  }, [onCellValueChange, startEditing])
 
   // ── Pinning style helper ───────────────────────────────────────────────────
-  const pinStyle = (
+  const pinStyle = useCallback((
     pinned: false | 'left' | 'right',
     getStart: () => number,
     getAfter: () => number,
@@ -319,6 +322,7 @@ function DataTable<TData>({
       : pinned === 'right'
         ? { right: getAfter() }
         : undefined
+  , [])
 
   return (
     <div ref={containerRef} className={cn('flex flex-col gap-2', className)}>
@@ -426,8 +430,8 @@ function DataTable<TData>({
               </RowComp>
             ) : (
               table.getRowModel().rows.map((row) => (
-                <>
-                  <RowComp key={row.id} selected={row.getIsSelected() || undefined}>
+                <Fragment key={row.id}>
+                  <RowComp selected={row.getIsSelected() || undefined}>
                     {hasExpansion && (
                       <CellComp style={{ width: 36, minWidth: 36 }}>
                         {row.getCanExpand() && (
@@ -491,7 +495,7 @@ function DataTable<TData>({
                       </CellComp>
                     </RowComp>
                   )}
-                </>
+                </Fragment>
               ))
             )}
           </TableBody>
