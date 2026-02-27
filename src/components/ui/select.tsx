@@ -1,5 +1,6 @@
 import { forwardRef } from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
+import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
@@ -10,21 +11,77 @@ const SelectValue   = SelectPrimitive.Value
 
 // ─── Trigger ──────────────────────────────────────────────────────────────────
 
+const selectTriggerVariants = cva(
+  [
+    'flex w-full items-center justify-between whitespace-nowrap text-sm transition-colors',
+    'ring-offset-background placeholder:text-muted-foreground',
+    'focus:outline-none focus:ring-1',
+    'disabled:cursor-not-allowed disabled:opacity-50',
+    '[&>span]:line-clamp-1',
+  ],
+  {
+    variants: {
+      /**
+       * `variant` — structural shape of the trigger.
+       * Does NOT encode meaning. Use `color` for that.
+       */
+      variant: {
+        outline: 'rounded-md border bg-transparent px-3 shadow-sm',
+        filled:  'rounded-md border-b-2 bg-muted px-3',
+        flushed: 'border-b-2 bg-transparent px-0',
+      },
+      /**
+       * `color` — semantic validation state.
+       * Does NOT control layout. Use `variant` for that.
+       */
+      color: {
+        default: '',
+        error:   '',
+        success: '',
+        warning: '',
+      },
+      size: {
+        sm: 'h-8 text-xs py-1',
+        md: 'h-9 py-2',
+        lg: 'h-11 text-base py-2',
+      },
+    },
+    compoundVariants: [
+      // outline × color
+      { variant: 'outline', color: 'default', class: 'border-input   focus:ring-ring'    },
+      { variant: 'outline', color: 'error',   class: 'border-danger  focus:ring-danger'  },
+      { variant: 'outline', color: 'success', class: 'border-success focus:ring-success' },
+      { variant: 'outline', color: 'warning', class: 'border-warning focus:ring-warning' },
+      // filled × color
+      { variant: 'filled',  color: 'default', class: 'border-b-transparent focus:ring-ring'    },
+      { variant: 'filled',  color: 'error',   class: 'border-b-danger      focus:ring-danger'  },
+      { variant: 'filled',  color: 'success', class: 'border-b-success     focus:ring-success' },
+      { variant: 'filled',  color: 'warning', class: 'border-b-warning     focus:ring-warning' },
+      // flushed × color
+      { variant: 'flushed', color: 'default', class: 'border-b-input   focus:ring-ring'    },
+      { variant: 'flushed', color: 'error',   class: 'border-b-danger  focus:ring-danger'  },
+      { variant: 'flushed', color: 'success', class: 'border-b-success focus:ring-success' },
+      { variant: 'flushed', color: 'warning', class: 'border-b-warning focus:ring-warning' },
+    ],
+    defaultVariants: {
+      variant: 'outline',
+      color: 'default',
+      size: 'md',
+    },
+  }
+)
+
+export interface SelectTriggerProps
+  extends Omit<React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>, 'color'>,
+    VariantProps<typeof selectTriggerVariants> {}
+
 const SelectTrigger = forwardRef<
   React.ElementRef<typeof SelectPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Trigger>
->(({ className, children, ...props }, ref) => (
+  SelectTriggerProps
+>(({ className, variant, color, size, children, ...props }, ref) => (
   <SelectPrimitive.Trigger
     ref={ref}
-    className={cn(
-      'flex h-9 w-full items-center justify-between whitespace-nowrap rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm',
-      'ring-offset-background',
-      'placeholder:text-muted-foreground',
-      'focus:outline-none focus:ring-1 focus:ring-ring',
-      'disabled:cursor-not-allowed disabled:opacity-50',
-      '[&>span]:line-clamp-1',
-      className
-    )}
+    className={cn(selectTriggerVariants({ variant, color, size }), className)}
     {...props}
   >
     {children}
@@ -225,4 +282,5 @@ export {
   SelectSeparator,
   SelectScrollUpButton,
   SelectScrollDownButton,
+  selectTriggerVariants,
 }
