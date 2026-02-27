@@ -92,6 +92,8 @@ function DataTable<TData>({
 
   enableKeyboardNavigation = false,
 
+  components,
+
   stickyHeader = false,
   emptyMessage = 'No results.',
   className,
@@ -223,6 +225,11 @@ function DataTable<TData>({
       ? (e) => (e as KeyboardEvent).shiftKey
       : () => false,
   })
+
+  // ── Component slots ────────────────────────────────────────────────────────
+  // Falls back to the built-in atoms when not overridden.
+  const RowComp  = components?.Row  ?? TableRow
+  const CellComp = components?.Cell ?? TableCell
 
   // ── Derived flags ──────────────────────────────────────────────────────────
   const hasGlobalFilter  = onGlobalFilterChange !== undefined
@@ -409,27 +416,27 @@ function DataTable<TData>({
 
           <TableBody onKeyDown={enableKeyboardNavigation ? handleBodyKeyDown : undefined}>
             {table.getRowModel().rows.length === 0 ? (
-              <TableRow>
-                <TableCell
+              <RowComp>
+                <CellComp
                   colSpan={columns.length + (hasExpansion ? 1 : 0)}
                   className="h-24 text-center text-muted-foreground"
                 >
                   {emptyMessage}
-                </TableCell>
-              </TableRow>
+                </CellComp>
+              </RowComp>
             ) : (
               table.getRowModel().rows.map((row) => (
                 <>
-                  <TableRow key={row.id} selected={row.getIsSelected()}>
+                  <RowComp key={row.id} selected={row.getIsSelected() || undefined}>
                     {hasExpansion && (
-                      <TableCell style={{ width: 36, minWidth: 36 }}>
+                      <CellComp style={{ width: 36, minWidth: 36 }}>
                         {row.getCanExpand() && (
                           <ExpandToggle
                             expanded={row.getIsExpanded()}
                             onToggle={() => row.toggleExpanded()}
                           />
                         )}
-                      </TableCell>
+                      </CellComp>
                     )}
 
                     {row.getVisibleCells().map((cell) => {
@@ -443,7 +450,7 @@ function DataTable<TData>({
                         activeEditingCell?.columnId === col.id
 
                       return (
-                        <TableCell
+                        <CellComp
                           key={cell.id}
                           frozen={!!pinned}
                           style={pinStyle(pinned, () => col.getStart('left'), () => col.getAfter('right'))}
@@ -452,11 +459,9 @@ function DataTable<TData>({
                           data-row-id={enableKeyboardNavigation ? row.id : undefined}
                           data-col-id={enableKeyboardNavigation ? col.id : undefined}
                           data-editable={enableKeyboardNavigation && editable ? 'true' : undefined}
-                          className={cn(
-                            editable && !editing && 'cursor-pointer hover:bg-primary/5',
-                            enableKeyboardNavigation && 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset'
-                          )}
-                          onClick={
+                          interaction={editable ? (editing ? 'editing' : 'editable') : 'none'}
+                          focusable={enableKeyboardNavigation || undefined}
+                          onDoubleClick={
                             editable && !editing
                               ? () => startEditing(row.id, col.id)
                               : undefined
@@ -471,20 +476,20 @@ function DataTable<TData>({
                           ) : (
                             flexRender(col.columnDef.cell, cell.getContext())
                           )}
-                        </TableCell>
+                        </CellComp>
                       )
                     })}
-                  </TableRow>
+                  </RowComp>
 
                   {hasExpansion && row.getIsExpanded() && (
-                    <TableRow key={`${row.id}-sub`}>
-                      <TableCell
+                    <RowComp key={`${row.id}-sub`}>
+                      <CellComp
                         colSpan={columns.length + 1}
                         className="bg-muted/30 p-0"
                       >
                         {renderSubRow(row)}
-                      </TableCell>
-                    </TableRow>
+                      </CellComp>
+                    </RowComp>
                   )}
                 </>
               ))

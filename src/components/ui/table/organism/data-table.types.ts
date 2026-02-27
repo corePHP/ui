@@ -9,6 +9,8 @@ import type {
   RowSelectionState,
   VisibilityState,
 } from '@tanstack/react-table'
+import type { TableCellProps } from '../atom/base/table-cell'
+import type { TableRowProps } from '../atom/base/table-row'
 
 // ColumnVisibilityState is an alias for TanStack's VisibilityState, exposed
 // under a more descriptive name so consumers don't need to know the internal name.
@@ -102,6 +104,30 @@ export interface CellChangeEvent<TData> {
 export type OnEditingCellChange = (cell: EditingCell | null) => void
 export type OnCellValueChange<TData> = (event: CellChangeEvent<TData>) => void
 
+// ─── Component slots ──────────────────────────────────────────────────────────
+//
+// Allows consumers to replace the default Row / Cell atoms with their own
+// implementations. Custom components must satisfy the same prop contract
+// (TableRowProps / TableCellProps) so the organism can inject interaction,
+// focusable, frozen, selected, etc. without knowing the implementation.
+//
+// Usage:
+//   <DataTable components={{ Row: MyRow, Cell: MyCell }} ... />
+
+export interface DataTableComponents {
+  /**
+   * Replaces `TableRow`. Must accept `TableRowProps` (including `selected`).
+   * Applied to every data row, sub-row, and the empty-state row.
+   */
+  Row?: React.ComponentType<TableRowProps>
+  /**
+   * Replaces `TableCell`. Must accept `TableCellProps` (including `interaction`,
+   * `focusable`, `frozen`, `align`).
+   * Applied to every data cell, expand cell, and the empty-state cell.
+   */
+  Cell?: React.ComponentType<TableCellProps>
+}
+
 // ─── Page size options ────────────────────────────────────────────────────────
 
 export type DataTablePageSizeOptions = number[]
@@ -171,6 +197,13 @@ export interface DataTableProps<TData> {
    * While a cell editor is active, arrow keys are handled by the editor.
    */
   enableKeyboardNavigation?: boolean
+
+  // Component slots
+  /**
+   * Override the default Row and/or Cell atoms.
+   * Custom components must implement TableRowProps / TableCellProps.
+   */
+  components?: DataTableComponents
 
   // UI
   stickyHeader?: boolean
