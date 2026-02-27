@@ -619,3 +619,294 @@ export const RowExpansionCollapseCallback: Story = {
     )
   },
 }
+
+// ─── Shared: editable columns ────────────────────────────────────────────────
+//
+// Used by both keyboard-navigation and cell-editing stories.
+
+import { InputEditor } from './editor'
+
+const EDITABLE_COLUMNS: ColumnDef<User>[] = [
+  {
+    accessorKey: 'name',
+    header: 'Name',
+    editCell: <InputEditor />,
+  },
+  {
+    accessorKey: 'email',
+    header: 'Email',
+    editCell: <InputEditor />,
+  },
+  { accessorKey: 'role',   header: 'Role' },    // not editable
+  { accessorKey: 'status', header: 'Status' },  // not editable
+]
+
+// ─── Keyboard navigation ──────────────────────────────────────────────────────
+
+export const KeyNavArrowHorizontal: Story = {
+  name: 'Keyboard nav — ArrowRight / ArrowLeft',
+  args: {
+    enableKeyboardNavigation: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+
+    // Click Alice's Name cell to give it focus
+    const nameCell = canvas.getByRole('cell', { name: 'Alice Johnson' })
+    await userEvent.click(nameCell)
+    await expect(nameCell).toHaveFocus()
+
+    // ArrowRight → Email cell
+    await userEvent.keyboard('{ArrowRight}')
+    await expect(canvas.getByRole('cell', { name: 'alice@example.com' })).toHaveFocus()
+
+    // ArrowLeft → back to Name
+    await userEvent.keyboard('{ArrowLeft}')
+    await expect(nameCell).toHaveFocus()
+  },
+}
+
+export const KeyNavArrowVertical: Story = {
+  name: 'Keyboard nav — ArrowDown / ArrowUp',
+  args: {
+    enableKeyboardNavigation: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+
+    const aliceCell = canvas.getByRole('cell', { name: 'Alice Johnson' })
+    await userEvent.click(aliceCell)
+
+    // ArrowDown → Bob's Name cell
+    await userEvent.keyboard('{ArrowDown}')
+    await expect(canvas.getByRole('cell', { name: 'Bob Smith' })).toHaveFocus()
+
+    // ArrowUp → back to Alice
+    await userEvent.keyboard('{ArrowUp}')
+    await expect(aliceCell).toHaveFocus()
+  },
+}
+
+export const KeyNavBoundaryStops: Story = {
+  name: 'Keyboard nav — stops at boundary (no wrap-around)',
+  args: {
+    enableKeyboardNavigation: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+
+    // Focus the last column of the first row (Status)
+    const statusCell = canvas.getAllByRole('cell', { name: 'active' })[0]
+    await userEvent.click(statusCell)
+    await expect(statusCell).toHaveFocus()
+
+    // ArrowRight at the last column — focus must not move
+    await userEvent.keyboard('{ArrowRight}')
+    await expect(statusCell).toHaveFocus()
+  },
+}
+
+export const KeyNavEnterStartsEdit: Story = {
+  name: 'Keyboard nav — Enter starts editing',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    enableKeyboardNavigation: true,
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+
+    // Navigate to Alice's Name cell and press Enter
+    const nameCell = canvas.getByRole('cell', { name: 'Alice Johnson' })
+    await userEvent.click(nameCell)
+    await expect(nameCell).toHaveFocus()
+
+    await userEvent.keyboard('{Enter}')
+
+    // Editor must appear with the current value selected
+    const input = canvas.getByRole('textbox')
+    await expect(input).toHaveValue('Alice Johnson')
+    await expect(input).toHaveFocus()
+  },
+}
+
+export const KeyNavEditorBlocksArrows: Story = {
+  name: 'Keyboard nav — arrows stay in editor while editing',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    enableKeyboardNavigation: true,
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+
+    // Click editable cell to open editor
+    await userEvent.click(canvas.getByRole('cell', { name: 'Alice Johnson' }))
+    const input = canvas.getByRole('textbox')
+    await expect(input).toHaveFocus()
+
+    // Arrow keys inside the editor must NOT trigger table navigation
+    await userEvent.keyboard('{ArrowRight}')
+    await userEvent.keyboard('{ArrowDown}')
+
+    // Editor is still active — no commit fired
+    await expect(canvas.queryByRole('textbox')).toBeInTheDocument()
+    await expect(args.onCellValueChange).not.toHaveBeenCalled()
+  },
+}
+
+export const KeyNavNonEditableEnterIgnored: Story = {
+  name: 'Keyboard nav — Enter on non-editable cell is ignored',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    enableKeyboardNavigation: true,
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+
+    // Role column has no editCell — pressing Enter should not open an editor
+    const roleCell = canvas.getAllByRole('cell', { name: 'Admin' })[0]
+    await userEvent.click(roleCell)
+    await userEvent.keyboard('{Enter}')
+
+    await expect(canvas.queryByRole('textbox')).not.toBeInTheDocument()
+    await expect(args.onCellValueChange).not.toHaveBeenCalled()
+  },
+}
+
+// ─── Callback — Cell editing ──────────────────────────────────────────────────
+//
+// Columns opt in to editing via `editCell` — a React element the organism
+// clones and injects value / onCommit / onCancel into at render time.
+
+export const CellEditCommitCallback: Story = {
+  name: 'Callback — Cell edit (Enter commits)',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+
+    // Click Alice's Name cell — organism enters edit mode internally
+    const aliceCell = canvas.getByRole('cell', { name: 'Alice Johnson' })
+    await userEvent.click(aliceCell)
+
+    // CellEditor auto-focuses and selects text
+    const input = canvas.getByRole('textbox')
+    await expect(input).toHaveValue('Alice Johnson')
+
+    // Clear and type the new value
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Alicia Johnson')
+    await userEvent.keyboard('{Enter}')
+
+    await expect(args.onCellValueChange).toHaveBeenCalledOnce()
+    await expect(args.onCellValueChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        columnId: 'name',
+        oldValue: 'Alice Johnson',
+        newValue: 'Alicia Johnson',
+        rowIndex: 0,
+      })
+    )
+  },
+}
+
+export const CellEditBlurCommitCallback: Story = {
+  name: 'Callback — Cell edit (blur commits)',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+
+    await userEvent.click(canvas.getByRole('cell', { name: 'Alice Johnson' }))
+
+    const input = canvas.getByRole('textbox')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Alice Smith')
+
+    // Click a non-editable cell to blur the editor
+    await userEvent.click(canvas.getByRole('cell', { name: 'Admin' }))
+
+    await expect(args.onCellValueChange).toHaveBeenCalledOnce()
+    await expect(args.onCellValueChange).toHaveBeenCalledWith(
+      expect.objectContaining({ newValue: 'Alice Smith' })
+    )
+  },
+}
+
+export const CellEditEscapeCancelCallback: Story = {
+  name: 'Callback — Cell edit (Escape cancels)',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+
+    await userEvent.click(canvas.getByRole('cell', { name: 'Alice Johnson' }))
+
+    const input = canvas.getByRole('textbox')
+    await userEvent.type(input, 'some edit')
+
+    // Escape — cancel without committing
+    await userEvent.keyboard('{Escape}')
+
+    // Input unmounted (edit cancelled)
+    await expect(canvas.queryByRole('textbox')).not.toBeInTheDocument()
+
+    // Callback must NOT have fired
+    await expect(args.onCellValueChange).not.toHaveBeenCalled()
+  },
+}
+
+export const CellEditNonEditableIgnoredCallback: Story = {
+  name: 'Callback — Cell edit (non-editable column ignored)',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+
+    // Role column is NOT editable — clicking it should not open an editor
+    await userEvent.click(canvas.getAllByRole('cell', { name: 'Editor' })[0])
+
+    await expect(canvas.queryByRole('textbox')).not.toBeInTheDocument()
+    await expect(args.onCellValueChange).not.toHaveBeenCalled()
+  },
+}
+
+export const CellEditControlledCallback: Story = {
+  name: 'Callback — Cell edit (external control)',
+  args: {
+    columns: EDITABLE_COLUMNS,
+    // Start with row 0 / name column already in edit mode
+    editingCell: { rowId: '0', columnId: 'name' },
+    onEditingCellChange: fn(),
+    onCellValueChange: fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+
+    // Editor is rendered because editingCell is pre-set
+    const input = canvas.getByRole('textbox')
+    await expect(input).toHaveValue('Alice Johnson')
+
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Alice Updated')
+    await userEvent.keyboard('{Enter}')
+
+    // Value committed
+    await expect(args.onCellValueChange).toHaveBeenCalledWith(
+      expect.objectContaining({ newValue: 'Alice Updated' })
+    )
+
+    // Parent notified to clear editing state
+    await expect(args.onEditingCellChange).toHaveBeenCalledWith(null)
+  },
+}

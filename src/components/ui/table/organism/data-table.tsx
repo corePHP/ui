@@ -1,3 +1,4 @@
+import { cloneElement, useRef, useState } from 'react'
 import {
   flexRender,
   getCoreRowModel,
@@ -6,6 +7,7 @@ import {
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
+  type Row,
 } from '@tanstack/react-table'
 import { cn } from '@/lib/utils'
 import { TableWrapper } from '../atom/base/table-wrapper'
@@ -21,8 +23,11 @@ import { ColumnVisibility } from '../molecules/column-visibility'
 import { FilterInput } from '../molecules/filter-input'
 import { Pagination } from '../molecules/pagination'
 import type {
+  CellChangeEvent,
+  ColumnDef,
   ColumnVisibilityState,
   DataTableProps,
+  EditingCell,
   ExpandedState,
 } from './data-table.types'
 
@@ -45,6 +50,7 @@ import type {
 //   Column visibility — show / hide columns
 //   Row selection     — checkbox-driven, fully controlled
 //   Row expansion     — expandable sub-rows via renderSubRow
+//   Cell editing      — inline edit via CellEditor atom; opt-in per column via meta.editable
 
 function DataTable<TData>({
   columns,
@@ -80,11 +86,69 @@ function DataTable<TData>({
   onExpandedChange,
   renderSubRow,
 
+  onCellValueChange,
+  editingCell,
+  onEditingCellChange,
+
+  enableKeyboardNavigation = false,
+
   stickyHeader = false,
   emptyMessage = 'No results.',
   className,
 }: DataTableProps<TData>) {
   const isManual = pageCount !== undefined
+
+  // ── Container ref (used by keyboard navigation to refocus cells after edit) ─
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // ── Cell editing state ────────────────────────────────────────────────────
+  // Internal state handles the "which cell is active" concern.
+  // When `editingCell` prop is provided (even null), external control takes over.
+  const [internalEditingCell, setInternalEditingCell] = useState<EditingCell | null>(null)
+  const isEditingControlled = editingCell !== undefined
+  const activeEditingCell = isEditingControlled ? (editingCell ?? null) : internalEditingCell
+
+  // ── Keyboard-navigation helpers ───────────────────────────────────────────
+  // After an edit commits or cancels, return focus to the originating cell so
+  // the user can continue navigating with arrow keys without touching the mouse.
+  const refocusCell = (rowId: string, columnId: string) => {
+    if (!enableKeyboardNavigation) return
+    requestAnimationFrame(() => {
+      const td = containerRef.current?.querySelector(
+        `td[data-row-id="${rowId}"][data-col-id="${columnId}"]`
+      ) as HTMLTableCellElement | null
+      td?.focus()
+    })
+  }
+
+  const startEditing = (rowId: string, columnId: string) => {
+    if (isEditingControlled) {
+      onEditingCellChange?.({ rowId, columnId })
+    } else {
+      setInternalEditingCell({ rowId, columnId })
+    }
+  }
+
+  const stopEditing = (rowId?: string, columnId?: string) => {
+    if (isEditingControlled) {
+      onEditingCellChange?.(null)
+    } else {
+      setInternalEditingCell(null)
+    }
+    if (rowId && columnId) refocusCell(rowId, columnId)
+  }
+
+  const commitEdit = (row: Row<TData>, columnId: string, newValue: unknown) => {
+    onCellValueChange?.({
+      rowId: row.id,
+      columnId,
+      rowIndex: row.index,
+      oldValue: row.getValue(columnId),
+      newValue,
+      row,
+    } as CellChangeEvent<TData>)
+    stopEditing(row.id, columnId)
+  }
 
   const table = useReactTable<TData>({
     data,
@@ -161,13 +225,81 @@ function DataTable<TData>({
   })
 
   // ── Derived flags ──────────────────────────────────────────────────────────
-  const hasGlobalFilter   = onGlobalFilterChange !== undefined
-  const hasColVisibility  = onColumnVisibilityChange !== undefined
-  const hasFilterRow      =
+  const hasGlobalFilter  = onGlobalFilterChange !== undefined
+  const hasColVisibility = onColumnVisibilityChange !== undefined
+  const hasFilterRow     =
     onColumnFiltersChange !== undefined &&
     table.getAllLeafColumns().some((c) => c.getCanFilter())
-  const hasPagination     = onPaginationChange !== undefined
-  const hasExpansion      = renderSubRow !== undefined
+  const hasPagination    = onPaginationChange !== undefined
+  const hasExpansion     = renderSubRow !== undefined
+  const hasEditing       = onCellValueChange !== undefined
+
+  // ── Keyboard navigation handler ───────────────────────────────────────────
+  const handleBodyKeyDown = (e: React.KeyboardEvent<HTMLTableSectionElement>) => {
+    // While a cell editor (input / select / textarea) has focus, let it handle
+    // its own key events — do not interfere with arrow keys inside editors.
+    const target = e.target as HTMLElement
+    if (
+      target.tagName === 'INPUT'    ||
+      target.tagName === 'SELECT'   ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable
+    ) return
+
+    const cell = target.closest('td') as HTMLTableCellElement | null
+    if (!cell) return
+
+    const row   = cell.parentElement as HTMLTableRowElement
+    const tbody = row.parentElement as HTMLTableSectionElement
+    const rows  = Array.from(tbody.querySelectorAll(':scope > tr'))  as HTMLTableRowElement[]
+    const cells = Array.from(row.querySelectorAll(':scope > td'))    as HTMLTableCellElement[]
+
+    const rowIndex = rows.indexOf(row)
+    const colIndex = cells.indexOf(cell)
+
+    let target2: HTMLTableCellElement | null = null
+
+    switch (e.key) {
+      case 'ArrowRight':
+        e.preventDefault()
+        target2 = cells[colIndex + 1] ?? null
+        break
+      case 'ArrowLeft':
+        e.preventDefault()
+        target2 = cells[colIndex - 1] ?? null
+        break
+      case 'ArrowDown': {
+        e.preventDefault()
+        const nextRow = rows[rowIndex + 1]
+        if (nextRow) {
+          const nc = Array.from(nextRow.querySelectorAll(':scope > td')) as HTMLTableCellElement[]
+          target2 = nc[colIndex] ?? null
+        }
+        break
+      }
+      case 'ArrowUp': {
+        e.preventDefault()
+        const prevRow = rows[rowIndex - 1]
+        if (prevRow) {
+          const pc = Array.from(prevRow.querySelectorAll(':scope > td')) as HTMLTableCellElement[]
+          target2 = pc[colIndex] ?? null
+        }
+        break
+      }
+      case 'Enter': {
+        if (!hasEditing) break
+        e.preventDefault()
+        if (cell.dataset.editable === 'true') {
+          const colId = cell.dataset.colId
+          const rowId = cell.dataset.rowId
+          if (colId && rowId) startEditing(rowId, colId)
+        }
+        break
+      }
+    }
+
+    if (target2) target2.focus()
+  }
 
   // ── Pinning style helper ───────────────────────────────────────────────────
   const pinStyle = (
@@ -182,7 +314,7 @@ function DataTable<TData>({
         : undefined
 
   return (
-    <div className={cn('flex flex-col gap-2', className)}>
+    <div ref={containerRef} className={cn('flex flex-col gap-2', className)}>
 
       {/* ── Toolbar: global search + column visibility ──────────────────────── */}
       {(hasGlobalFilter || hasColVisibility) && (
@@ -213,7 +345,6 @@ function DataTable<TData>({
             {/* ── Column headers ──────────────────────────────────────────── */}
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
-                {/* Expansion gutter */}
                 {hasExpansion && <TableHead style={{ width: 36, minWidth: 36 }} />}
 
                 {headerGroup.headers.map((header) => {
@@ -276,7 +407,7 @@ function DataTable<TData>({
               ))}
           </TableHeader>
 
-          <TableBody>
+          <TableBody onKeyDown={enableKeyboardNavigation ? handleBodyKeyDown : undefined}>
             {table.getRowModel().rows.length === 0 ? (
               <TableRow>
                 <TableCell
@@ -290,7 +421,6 @@ function DataTable<TData>({
               table.getRowModel().rows.map((row) => (
                 <>
                   <TableRow key={row.id} selected={row.getIsSelected()}>
-                    {/* Expand toggle */}
                     {hasExpansion && (
                       <TableCell style={{ width: 36, minWidth: 36 }}>
                         {row.getCanExpand() && (
@@ -303,22 +433,49 @@ function DataTable<TData>({
                     )}
 
                     {row.getVisibleCells().map((cell) => {
-                      const col    = cell.column
-                      const pinned = col.getIsPinned()
+                      const col      = cell.column
+                      const pinned   = col.getIsPinned()
+                      const editCell = (col.columnDef as ColumnDef<TData>).editCell
+                      const editable = hasEditing && editCell !== undefined
+                      const editing  =
+                        editable &&
+                        activeEditingCell?.rowId === row.id &&
+                        activeEditingCell?.columnId === col.id
 
                       return (
                         <TableCell
                           key={cell.id}
                           frozen={!!pinned}
                           style={pinStyle(pinned, () => col.getStart('left'), () => col.getAfter('right'))}
+                          // ── Keyboard navigation attributes ────────────────
+                          tabIndex={enableKeyboardNavigation ? 0 : undefined}
+                          data-row-id={enableKeyboardNavigation ? row.id : undefined}
+                          data-col-id={enableKeyboardNavigation ? col.id : undefined}
+                          data-editable={enableKeyboardNavigation && editable ? 'true' : undefined}
+                          className={cn(
+                            editable && !editing && 'cursor-pointer hover:bg-primary/5',
+                            enableKeyboardNavigation && 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset'
+                          )}
+                          onClick={
+                            editable && !editing
+                              ? () => startEditing(row.id, col.id)
+                              : undefined
+                          }
                         >
-                          {flexRender(col.columnDef.cell, cell.getContext())}
+                          {editing && editCell ? (
+                            cloneElement(editCell, {
+                              value: row.getValue(col.id),
+                              onCommit: (v: unknown) => commitEdit(row, col.id, v),
+                              onCancel: () => stopEditing(row.id, col.id),
+                            })
+                          ) : (
+                            flexRender(col.columnDef.cell, cell.getContext())
+                          )}
                         </TableCell>
                       )
                     })}
                   </TableRow>
 
-                  {/* Sub-row content */}
                   {hasExpansion && row.getIsExpanded() && (
                     <TableRow key={`${row.id}-sub`}>
                       <TableCell
