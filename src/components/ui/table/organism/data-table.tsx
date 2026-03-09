@@ -1,4 +1,4 @@
-import { Fragment, cloneElement, useCallback, useMemo, useRef, useState } from 'react'
+import { Fragment, cloneElement, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   flexRender,
   getCoreRowModel,
@@ -9,6 +9,7 @@ import {
   useReactTable,
   type Row,
 } from '@tanstack/react-table'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { cn } from '@/lib/utils'
 import { TableWrapper } from '../atom/base/table-wrapper'
 import { TableRoot } from '../atom/base/table-root'
@@ -30,6 +31,7 @@ import type {
   EditingCell,
   ExpandedState,
 } from './data-table.types'
+export type { VirtualConfig } from './data-table.types'
 
 // ─── DataTable ────────────────────────────────────────────────────────────────
 //
@@ -94,14 +96,24 @@ function DataTable<TData>({
 
   components,
 
+  virtual,
+
   stickyHeader = false,
   emptyMessage = 'No results.',
   className,
 }: DataTableProps<TData>) {
   const isManual = pageCount !== undefined
 
-  // ── Container ref (used by keyboard navigation to refocus cells after edit) ─
+  // Infinite scroll mode: virtual.onLoadMore is provided.
+  // In this mode the traditional pagination UI is hidden and TanStack's
+  // pagination row model is disabled — all rows are passed to the virtualizer.
+  const isInfiniteScroll = virtual?.onLoadMore !== undefined
+
+  // ── Refs ──────────────────────────────────────────────────────────────────
+  // containerRef: outer wrapper, used by keyboard navigation to query cells.
+  // scrollRef:    scroll container forwarded to useVirtualizer.
   const containerRef = useRef<HTMLDivElement>(null)
+  const scrollRef    = useRef<HTMLDivElement>(null)
 
   // ── Cell editing state ────────────────────────────────────────────────────
   // Internal state handles the "which cell is active" concern.
@@ -206,11 +218,14 @@ function DataTable<TData>({
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: !isManual ? getSortedRowModel() : undefined,
     getFilteredRowModel: !isManual ? getFilteredRowModel() : undefined,
+    // In infinite scroll mode all rows must reach the virtualizer — no slicing.
     getPaginationRowModel:
-      !isManual && onPaginationChange !== undefined
+      !isManual && onPaginationChange !== undefined && !isInfiniteScroll
         ? getPaginationRowModel()
         : undefined,
     getExpandedRowModel: renderSubRow !== undefined ? getExpandedRowModel() : undefined,
+    // Force all rows expandable when renderSubRow is provided (data may have no sub-rows)
+    getRowCanExpand: renderSubRow !== undefined ? () => true : undefined,
 
     // ── Manual flags (server-side mode) ──────────────────────────────────────
     manualSorting: isManual,
@@ -232,12 +247,40 @@ function DataTable<TData>({
   const RowComp  = useMemo(() => components?.Row  ?? TableRow,  [components?.Row])
   const CellComp = useMemo(() => components?.Cell ?? TableCell, [components?.Cell])
 
+  // ── Row virtualizer ────────────────────────────────────────────────────────
+  // Always called (hooks must not be conditional).
+  // When virtual is off, count=0 so no virtual items are produced and the
+  // results are ignored in favour of the standard rendering path.
+  const rows = table.getRowModel().rows
+  const rowVirtualizer = useVirtualizer({
+    count:           virtual ? rows.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize:    () => virtual?.estimateRowHeight ?? 40,
+    overscan:        virtual?.overscan ?? 10,
+  })
+
+  // ── Infinite scroll trigger ────────────────────────────────────────────────
+  // Fire onLoadMore when the last virtual item reaches the final loaded row.
+  // Uses the last item's index as the dep — a stable primitive — to avoid
+  // firing on every render cycle.
+  const virtualItems     = rowVirtualizer.getVirtualItems()
+  const lastVirtualIndex = virtualItems[virtualItems.length - 1]?.index
+  useEffect(() => {
+    if (!virtual?.onLoadMore)      return
+    if (virtual.hasMore === false) return
+    if (lastVirtualIndex === undefined) return
+    if (lastVirtualIndex >= rows.length - 1) {
+      virtual.onLoadMore()
+    }
+  }, [lastVirtualIndex, rows.length, virtual?.onLoadMore, virtual?.hasMore])
+
   // ── Derived flags ──────────────────────────────────────────────────────────
-  const hasGlobalFilter  = onGlobalFilterChange  !== undefined
+  const hasGlobalFilter  = onGlobalFilterChange     !== undefined
   const hasColVisibility = onColumnVisibilityChange !== undefined
-  const hasPagination    = onPaginationChange    !== undefined
-  const hasExpansion     = renderSubRow          !== undefined
-  const hasEditing       = onCellValueChange     !== undefined
+  // Pagination UI is hidden in infinite scroll mode — onLoadMore replaces page navigation.
+  const hasPagination    = onPaginationChange !== undefined && !isInfiniteScroll
+  const hasExpansion     = renderSubRow       !== undefined
+  const hasEditing       = onCellValueChange  !== undefined
   // Memoized separately: getAllLeafColumns() iterates all columns on every call
   const hasFilterRow = useMemo(
     () => onColumnFiltersChange !== undefined && table.getAllLeafColumns().some((c) => c.getCanFilter()),
@@ -324,6 +367,94 @@ function DataTable<TData>({
         : undefined
   , [])
 
+  // ── Virtual padding rows ───────────────────────────────────────────────────
+  // TanStack Virtual uses a padding-row technique for HTML tables:
+  // a spacer <tr> at the top and bottom fills the gap left by non-rendered rows,
+  // preserving the correct scrollbar track size without absolute positioning.
+  const paddingTop    = virtualItems.length ? (virtualItems[0]?.start ?? 0)      : 0
+  const lastVirtItem  = virtualItems[virtualItems.length - 1]
+  const paddingBottom = lastVirtItem
+    ? rowVirtualizer.getTotalSize() - lastVirtItem.end
+    : 0
+
+  // ── Row render helper ──────────────────────────────────────────────────────
+  // Shared between virtual and non-virtual paths to avoid duplication.
+  const renderRow = (row: (typeof rows)[number]) => (
+    <Fragment key={row.id}>
+      <RowComp selected={row.getIsSelected() || undefined}>
+        {hasExpansion && (
+          <CellComp style={{ width: 36, minWidth: 36 }}>
+            {row.getCanExpand() && (
+              <ExpandToggle
+                expanded={row.getIsExpanded()}
+                onToggle={() => row.toggleExpanded()}
+              />
+            )}
+          </CellComp>
+        )}
+
+        {row.getVisibleCells().map((cell) => {
+          const col      = cell.column
+          const pinned   = col.getIsPinned()
+          const editCell = (col.columnDef as ColumnDef<TData>).editCell
+          const editable = hasEditing && editCell !== undefined
+          const editing  =
+            editable &&
+            activeEditingCell?.rowId === row.id &&
+            activeEditingCell?.columnId === col.id
+
+          return (
+            <CellComp
+              key={cell.id}
+              frozen={!!pinned}
+              style={pinStyle(pinned, () => col.getStart('left'), () => col.getAfter('right'))}
+              // ── Keyboard navigation attributes ──────────────────────────
+              tabIndex={enableKeyboardNavigation ? 0 : undefined}
+              data-row-id={enableKeyboardNavigation ? row.id : undefined}
+              data-col-id={enableKeyboardNavigation ? col.id : undefined}
+              data-editable={enableKeyboardNavigation && editable ? 'true' : undefined}
+              interaction={editable ? (editing ? 'editing' : 'editable') : 'none'}
+              focusable={enableKeyboardNavigation || undefined}
+              // Without keyboard nav: single click opens editor.
+              // With keyboard nav: Enter opens editor (handleBodyKeyDown); double-click as bonus.
+              onClick={
+                editable && !editing && !enableKeyboardNavigation
+                  ? () => startEditing(row.id, col.id)
+                  : undefined
+              }
+              onDoubleClick={
+                editable && !editing && enableKeyboardNavigation
+                  ? () => startEditing(row.id, col.id)
+                  : undefined
+              }
+            >
+              {editing && editCell ? (
+                cloneElement(editCell, {
+                  value: row.getValue(col.id),
+                  onCommit: (v: unknown) => commitEdit(row, col.id, v),
+                  onCancel: () => stopEditing(row.id, col.id),
+                })
+              ) : (
+                flexRender(col.columnDef.cell, cell.getContext())
+              )}
+            </CellComp>
+          )
+        })}
+      </RowComp>
+
+      {hasExpansion && row.getIsExpanded() && (
+        <RowComp key={`${row.id}-sub`}>
+          <CellComp
+            colSpan={columns.length + 1}
+            className="bg-muted/30 p-0"
+          >
+            {renderSubRow(row)}
+          </CellComp>
+        </RowComp>
+      )}
+    </Fragment>
+  )
+
   return (
     <div ref={containerRef} className={cn('flex flex-col gap-2', className)}>
 
@@ -349,7 +480,15 @@ function DataTable<TData>({
         </div>
       )}
 
-      <TableWrapper>
+      {/*
+        TableWrapper doubles as the virtual scroll container when virtual is set.
+        Passing ref + height turns it into the scroll element tracked by useVirtualizer.
+        overflow-auto is already part of TableWrapper's base styles.
+      */}
+      <TableWrapper
+        ref={virtual ? scrollRef : undefined}
+        style={virtual ? { height: virtual.height } : undefined}
+      >
         <TableRoot>
           <TableHeader sticky={stickyHeader}>
 
@@ -374,7 +513,7 @@ function DataTable<TData>({
                         <ColumnHeader
                           sortable
                           sorted={sorted}
-                          onSort={() => col.toggleSorting()}
+                          onSort={(e) => col.getToggleSortingHandler()?.(e)}
                         >
                           {flexRender(col.columnDef.header, header.getContext())}
                         </ColumnHeader>
@@ -419,7 +558,7 @@ function DataTable<TData>({
           </TableHeader>
 
           <TableBody onKeyDown={enableKeyboardNavigation ? handleBodyKeyDown : undefined}>
-            {table.getRowModel().rows.length === 0 ? (
+            {rows.length === 0 ? (
               <RowComp>
                 <CellComp
                   colSpan={columns.length + (hasExpansion ? 1 : 0)}
@@ -428,81 +567,28 @@ function DataTable<TData>({
                   {emptyMessage}
                 </CellComp>
               </RowComp>
+            ) : virtual ? (
+              // ── Virtual rendering path ───────────────────────────────────
+              // Only the rows currently in the viewport are mounted.
+              // Padding rows above and below preserve scrollbar accuracy.
+              <>
+                {paddingTop > 0 && (
+                  <tr aria-hidden><td style={{ height: paddingTop }} /></tr>
+                )}
+                {virtualItems.map((vRow) => renderRow(rows[vRow.index]))}
+                {paddingBottom > 0 && (
+                  <tr aria-hidden><td style={{ height: paddingBottom }} /></tr>
+                )}
+              </>
             ) : (
-              table.getRowModel().rows.map((row) => (
-                <Fragment key={row.id}>
-                  <RowComp selected={row.getIsSelected() || undefined}>
-                    {hasExpansion && (
-                      <CellComp style={{ width: 36, minWidth: 36 }}>
-                        {row.getCanExpand() && (
-                          <ExpandToggle
-                            expanded={row.getIsExpanded()}
-                            onToggle={() => row.toggleExpanded()}
-                          />
-                        )}
-                      </CellComp>
-                    )}
-
-                    {row.getVisibleCells().map((cell) => {
-                      const col      = cell.column
-                      const pinned   = col.getIsPinned()
-                      const editCell = (col.columnDef as ColumnDef<TData>).editCell
-                      const editable = hasEditing && editCell !== undefined
-                      const editing  =
-                        editable &&
-                        activeEditingCell?.rowId === row.id &&
-                        activeEditingCell?.columnId === col.id
-
-                      return (
-                        <CellComp
-                          key={cell.id}
-                          frozen={!!pinned}
-                          style={pinStyle(pinned, () => col.getStart('left'), () => col.getAfter('right'))}
-                          // ── Keyboard navigation attributes ────────────────
-                          tabIndex={enableKeyboardNavigation ? 0 : undefined}
-                          data-row-id={enableKeyboardNavigation ? row.id : undefined}
-                          data-col-id={enableKeyboardNavigation ? col.id : undefined}
-                          data-editable={enableKeyboardNavigation && editable ? 'true' : undefined}
-                          interaction={editable ? (editing ? 'editing' : 'editable') : 'none'}
-                          focusable={enableKeyboardNavigation || undefined}
-                          onDoubleClick={
-                            editable && !editing
-                              ? () => startEditing(row.id, col.id)
-                              : undefined
-                          }
-                        >
-                          {editing && editCell ? (
-                            cloneElement(editCell, {
-                              value: row.getValue(col.id),
-                              onCommit: (v: unknown) => commitEdit(row, col.id, v),
-                              onCancel: () => stopEditing(row.id, col.id),
-                            })
-                          ) : (
-                            flexRender(col.columnDef.cell, cell.getContext())
-                          )}
-                        </CellComp>
-                      )
-                    })}
-                  </RowComp>
-
-                  {hasExpansion && row.getIsExpanded() && (
-                    <RowComp key={`${row.id}-sub`}>
-                      <CellComp
-                        colSpan={columns.length + 1}
-                        className="bg-muted/30 p-0"
-                      >
-                        {renderSubRow(row)}
-                      </CellComp>
-                    </RowComp>
-                  )}
-                </Fragment>
-              ))
+              // ── Standard rendering path ──────────────────────────────────
+              rows.map(renderRow)
             )}
           </TableBody>
         </TableRoot>
       </TableWrapper>
 
-      {/* ── Pagination (opt-in) ─────────────────────────────────────────────── */}
+      {/* ── Pagination (opt-in, hidden during infinite scroll) ──────────────── */}
       {hasPagination && (
         <Pagination
           page={pagination.pageIndex + 1}

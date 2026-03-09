@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { expect, userEvent, within, fn } from 'storybook/test'
+import { expect, userEvent, within, fn, fireEvent } from 'storybook/test'
 import { DataTable } from './organism/data-table'
 import type {
   ColumnDef,
@@ -123,7 +123,7 @@ export const Default: Story = {
     // Data rows present
     await expect(canvas.getByText('Alice Johnson')).toBeInTheDocument()
     await expect(canvas.getByText('bob@example.com')).toBeInTheDocument()
-    await expect(canvas.getByText('inactive')).toBeInTheDocument()
+    await expect(canvas.getAllByText('inactive')[0]).toBeInTheDocument()
   },
 }
 
@@ -431,11 +431,10 @@ export const MultiSortCallback: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement)
 
-    // Shift+click Email adds it as secondary sort
+    // fireEvent with shiftKey:true is needed because userEvent.click does not
+    // propagate keyboard modifier state to the dispatched MouseEvent in Playwright.
     const emailBtn = canvas.getByRole('button', { name: 'Email' })
-    await userEvent.keyboard('[ShiftLeft>]')
-    await userEvent.click(emailBtn)
-    await userEvent.keyboard('[/ShiftLeft]')
+    fireEvent.click(emailBtn, { shiftKey: true })
 
     await expect(args.onSortingChange).toHaveBeenCalledOnce()
     await expect(args.onSortingChange).toHaveBeenCalledWith([
@@ -456,11 +455,9 @@ export const MultiSortDisabledCallback: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement)
 
-    // Shift+click should replace, not accumulate
+    // fireEvent matches MultiSortCallback — verifies no secondary sort is added
     const emailBtn = canvas.getByRole('button', { name: 'Email' })
-    await userEvent.keyboard('[ShiftLeft>]')
-    await userEvent.click(emailBtn)
-    await userEvent.keyboard('[/ShiftLeft]')
+    fireEvent.click(emailBtn, { shiftKey: true })
 
     await expect(args.onSortingChange).toHaveBeenCalledOnce()
     // Only email — name was replaced
@@ -614,8 +611,9 @@ export const RowExpansionCollapseCallback: Story = {
     const collapseBtn = canvas.getByRole('button', { name: 'Collapse row' })
     await userEvent.click(collapseBtn)
 
+    // TanStack removes collapsed row keys from the expanded state map
     await expect(args.onExpandedChange).toHaveBeenCalledWith(
-      expect.objectContaining({ '0': false })
+      expect.not.objectContaining({ '0': true })
     )
   },
 }
@@ -740,8 +738,9 @@ export const KeyNavEditorBlocksArrows: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement)
 
-    // Click editable cell to open editor
+    // Click to focus cell, then Enter to open editor (keyboard-nav mode)
     await userEvent.click(canvas.getByRole('cell', { name: 'Alice Johnson' }))
+    await userEvent.keyboard('{Enter}')
     const input = canvas.getByRole('textbox')
     await expect(input).toHaveFocus()
 
@@ -829,8 +828,8 @@ export const CellEditBlurCommitCallback: Story = {
     await userEvent.clear(input)
     await userEvent.type(input, 'Alice Smith')
 
-    // Click a non-editable cell to blur the editor
-    await userEvent.click(canvas.getByRole('cell', { name: 'Admin' }))
+    // Click a non-editable cell to blur the editor (multiple "Admin" cells exist)
+    await userEvent.click(canvas.getAllByRole('cell', { name: 'Admin' })[0])
 
     await expect(args.onCellValueChange).toHaveBeenCalledOnce()
     await expect(args.onCellValueChange).toHaveBeenCalledWith(

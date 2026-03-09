@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { expect, userEvent, within, fn } from 'storybook/test'
+import { expect, userEvent, within, fn, waitFor, fireEvent } from 'storybook/test'
 import { Label } from './label'
 import { RadioGroup, RadioGroupItem } from './radio-group'
 
@@ -170,11 +170,14 @@ export const KeyboardNavigation: Story = {
   play: async (context: PlayCtx) => {
     const [radioX] = within(context.canvasElement).getAllByRole('radio')
 
-    radioX.focus()
+    await userEvent.click(radioX)
     await expect(radioX).toHaveFocus()
 
-    await userEvent.keyboard('{ArrowDown}')
+    // userEvent.keyboard may not target the focused element in the Playwright context;
+    // fireEvent.keyDown dispatches directly on radioX so Radix's handler fires.
+    fireEvent.keyDown(radioX, { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true })
+    // Radix defers the actual focus call via setTimeout; waitFor retries until settled.
     const [, radioY] = within(context.canvasElement).getAllByRole('radio')
-    await expect(radioY).toBeChecked()
+    await waitFor(() => expect(radioY).toBeChecked())
   },
 }

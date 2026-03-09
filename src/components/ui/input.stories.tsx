@@ -142,7 +142,7 @@ export const ClearOnType: Story = {
   play: async (context: PlayCtx) => {
     const input = within(context.canvasElement).getByRole('textbox')
 
-    await userEvent.tripleClick(input)
+    await userEvent.clear(input)
     await userEvent.type(input, 'new value')
     await expect(input).toHaveValue('new value')
   },

@@ -128,6 +128,39 @@ export interface DataTableComponents {
   Cell?: React.ComponentType<TableCellProps>
 }
 
+// ─── Virtualization ───────────────────────────────────────────────────────────
+//
+// Opt-in row virtualization via @tanstack/react-virtual.
+//
+// Two modes:
+//   Traditional pagination  — virtual: { height }
+//     Rows render in a fixed-height scrollable container.
+//     Standard pagination UI remains active.
+//   Infinite scroll         — virtual: { height, onLoadMore, hasMore }
+//     onLoadMore fires when the last virtual row nears the end of loaded data.
+//     The parent extends `data`; pagination UI is hidden.
+
+export interface VirtualConfig {
+  /** Fixed height of the scrollable container (px number or CSS string). Required. */
+  height: number | string
+  /** Estimated row height in pixels for the virtualizer. Default: 40 */
+  estimateRowHeight?: number
+  /** Extra rows rendered above/below the viewport. Default: 10 */
+  overscan?: number
+  /**
+   * Infinite scroll: called when the user scrolls near the last loaded row.
+   * When provided, traditional pagination UI is hidden.
+   * The parent fetches the next batch and extends `data`.
+   */
+  onLoadMore?: () => void
+  /**
+   * Set to false once all data is loaded to suppress repeated onLoadMore calls.
+   * Ignored when onLoadMore is not provided.
+   * Defaults to true (assumes more data is available).
+   */
+  hasMore?: boolean
+}
+
 // ─── Page size options ────────────────────────────────────────────────────────
 
 export type DataTablePageSizeOptions = number[]
@@ -204,6 +237,14 @@ export interface DataTableProps<TData> {
    * Custom components must implement TableRowProps / TableCellProps.
    */
   components?: DataTableComponents
+
+  // Virtualization — opt-in
+  //
+  // Wraps the table in a fixed-height scrollable container and renders only
+  // visible rows, dramatically improving performance for large datasets.
+  //
+  // Set onLoadMore + hasMore for infinite-scroll behavior.
+  virtual?: VirtualConfig
 
   // UI
   stickyHeader?: boolean

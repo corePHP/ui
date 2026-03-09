@@ -28,7 +28,7 @@ export interface ColumnHeaderProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'>,
     VariantProps<typeof columnHeaderVariants> {
   sorted?: SortDirection
-  onSort?: () => void
+  onSort?: (e: React.MouseEvent<HTMLButtonElement>) => void
 }
 
 const ColumnHeader = forwardRef<HTMLButtonElement, ColumnHeaderProps>(
